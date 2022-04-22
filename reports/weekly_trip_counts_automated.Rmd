@@ -1,0 +1,366 @@
+---
+title: "Weekly and Daily Trip Counts Report"
+output: html_document
+---
+```{r note, include = FALSE}
+#</font> <span style="color: Red;">*Note: If the previous day is a holiday, the Yellow and Green Taxi trip counts will be under-counted due to external data collection processes.*</span>
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r libraries, include = FALSE}
+
+library(fasttime)
+library(lubridate)
+library(RODBC)
+library(data.table)
+library(sqldf)
+library(ggplot2)
+library(dplyr)
+library(httr)
+library(jsonlite)
+library(RCurl)
+library(pbapply)
+library(tidyverse)
+library(taskscheduleR)
+library(openxlsx)
+library(readxl)
+library(reshape)
+library(ggthemes)
+library(scales)
+library(RSocrata)
+library(plotly)
+library(gridExtra)
+library(ggpubr)
+library(readxl)
+library(kableExtra)
+library(DT)
+library(ggforce)
+library(viridis)
+library(hrbrthemes)
+
+```
+This report is an analysis of the weekly trip estimates for each industry (Yellow Taxi, Green Taxi, and FHV HV). Table 1 and Figure 1 contain the current week's trip numbers and the percent change relative to the previous week's trips, trips during the week of 03-02-2020, and trips during the week of 04-06-2020. The two weeks from 2020 were chosen to establish baselines for trip volumes just prior to the pandemic (03-02-2020) and right after the first lockdown (04-06-2020). 
+
+Additionally, Table 2 and Figure 2 contain an analysis of trip numbers on a daily basis. The count of the most recent day is compared to the previous day and to the same day of the previous week to gauge changes in trip volume at a more granular level.
+
+```{r trip_record_database, include = FALSE}
+
+#Connecting to database
+policy = odbcConnect("TLC_PLCPRG_PRD")
+data = sqlQuery(policy, "SELECT * 
+                         FROM [TLC_PLCPRG_PRD].[dbo].[data_reports_daily_trip_estimates]
+                         ORDER BY date desc
+                         
+               
+                                      ")
+
+#Matching dates with week number
+##Note: Week starts on Monday
+week <- as.integer(format(data$date, "%V"))
+data$week <- week
+
+#Aggregating daily counts into weekly totals
+weekly_trip_counts <- data %>% group_by(week, company) %>% filter(week < 52) %>%   summarize(count = sum(trips))
+
+#Adding column with first day of the week associated with each week number
+weekly_trip_counts$week_start_date <- as.Date(paste(2022, weekly_trip_counts$week, 1, sep="-"), "%Y-%U-%u")
+
+
+#Specifying HV counts for when company is Uber or Lyft
+hv_trip_counts <- weekly_trip_counts %>% group_by(week) %>% summarize(count = sum(count[company == 'uber' | company == 'lyft']))
+hv_trip_counts$company <- 'fhv hv'
+
+#Binding hv_trip_counts to weekly_trip_counts so we can graph high volumes as a single line later
+hv_test_bind <- rbind(weekly_trip_counts, hv_trip_counts)
+#Adding column with first day of the week associated with each week number
+hv_test_bind$week_start_date <- as.Date(paste(2022, hv_test_bind$week, 1, sep="-"), "%Y-%U-%u")
+hv_test_bind
+
+#Daily Basis
+hv_trips_test <- data %>% group_by(date, company) %>% summarize(count = sum(trips))
+hv_only <- hv_trips_test %>% group_by(date) %>% summarize(count = sum(count[company == 'uber' | company == 'lyft']))
+hv_only$company <- 'fhv hv'
+hv_daily_bind <- rbind(hv_trips_test, hv_only)
+```
+
+```{r weekly_counts, include = FALSE}
+#Weekly Counts:
+#Creating lists of weekly counts for each industry/company
+yellow <- weekly_trip_counts$count[weekly_trip_counts$company == 'yellow']
+green <- weekly_trip_counts$count[weekly_trip_counts$company == 'green']
+uber <- weekly_trip_counts$count[weekly_trip_counts$company == 'uber']
+lyft <- weekly_trip_counts$count[weekly_trip_counts$company == 'lyft']
+
+#calculating percent differences
+##Yellows:
+#yellow_current_week <- head(tail(yellow, 2), 1)
+yellow_current_week <- tail(yellow, 1)
+#yellow_current_week <- 813413
+#yellow_previous_week <- head(tail(yellow, 3), 1)
+yellow_previous_week <- head(tail(yellow, 2), 1)
+#yellow_previous_week <- yellow_previous_week - 75356
+yellow_last_week_difference <- round(((yellow_current_week - yellow_previous_week) / yellow_previous_week) * 100, digit = 2)
+yellow_march_difference <- round(((yellow_current_week - 1508207) / 1508207) * 100, digit = 2)
+yellow_april_difference <- round(((yellow_current_week - 46779) / 46779) * 100, digit = 2)
+
+
+##Greens:
+#green_current_week <- head(tail(green, 2), 1)
+green_current_week <- tail(green, 1)
+#green_current_week <- 17698
+#green_previous_week <- head(tail(green, 3), 1)
+green_previous_week <- head(tail(green, 2), 1)
+#green_previous_week <- green_previous_week - 1990
+green_last_week_difference <- round(((green_current_week - green_previous_week) / green_previous_week) * 100, digit = 2)
+green_march_difference <- round(((green_current_week - 95666) / 95666) * 100, digit = 2)
+green_april_difference <- round(((green_current_week - 6942) / 6942) * 100, digit = 2)
+
+##Ubers:
+#uber_current_week <- head(tail(uber, 2), 1)
+uber_current_week <- tail(uber, 1)
+#uber_previous_week <- head(tail(uber, 3), 1)
+uber_previous_week <- head(tail(uber, 2), 1)
+uber_last_week_difference <- round(((uber_current_week - uber_previous_week) / uber_previous_week) * 100, digit = 2)
+uber_march_difference <- round(((uber_current_week - 5275219) / 5275219) * 100, digit = 2)
+uber_april_difference <- round(((uber_current_week - 574189) / 574189) * 100, digit = 2)
+
+##Lyfts:
+#lyft_current_week <- head(tail(lyft, 2), 1)
+lyft_current_week <- tail(lyft, 1)
+#lyft_previous_week <- head(tail(lyft, 3), 1)
+lyft_previous_week <- head(tail(lyft, 2), 1)
+lyft_last_week_difference <- round(((lyft_current_week - lyft_previous_week) / lyft_previous_week) * 100, digit = 2)
+lyft_march_difference <- round(((lyft_current_week - 5275219) / 5275219) * 100, digit = 2)
+lyft_april_difference <- round(((lyft_current_week - 200679) / 200679) * 100, digit = 2)
+
+##High Volumes:
+hv_current_week <- lyft_current_week + uber_current_week
+hv_previous_week <- lyft_previous_week + uber_previous_week
+hv_last_week_difference <- round(((hv_current_week - hv_previous_week) / hv_previous_week) * 100, digit = 2)
+hv_march_difference <- round(((hv_current_week - 5118545) / 5118545) * 100, digit = 2)
+hv_april_difference <- round(((hv_current_week - 774868) / 774868) * 100, digit = 2)
+
+```
+
+```{r daily_counts, include= FALSE}
+
+#Creating lists of daily counts for each industry/company
+yellow_day <- data$trips[data$company=='yellow']
+green_day <- data$trips[data$company == 'green']
+uber_day <- data$trips[data$company == 'uber']
+lyft_day <- data$trips[data$company == 'lyft']
+
+hv_day <- uber_day + lyft_day
+
+#Comparing today's counts with yesterday's counts
+#yellow_day[[8]] <- yellow_day[[8]] - 75356
+#yellow_day[[7]] <- yellow_day[[7]] + 75356
+
+##Yellow Taxis:
+yellow_today <- head(yellow_day, 1)
+#yellow_today <- tail(yellow_day, 1)
+yellow_yesterday <- tail(head(yellow_day, 2), 1)
+#yellow_yesterday <- head(tail(yellow_day, 2), 1)
+
+yellow_one_week_prior <- tail(head(yellow_day,8), 1)
+yellow_yesterday_difference <- round(((yellow_today - yellow_yesterday) / yellow_yesterday) * 100, digit = 2)
+yellow_week_prior_difference <- round(((yellow_today - yellow_one_week_prior) / yellow_one_week_prior) * 100, digit = 2)
+
+##Green Taxis:
+#green_day[[8]] <- green_day[[8]] - 1990
+#green_day[[7]] <- green_day[[7]] + 1990
+
+green_today <- head(green_day, 1)
+#green_today <- tail(green_day, 1)
+green_yesterday <- tail(head(green_day, 2), 1)
+#green_yesterday <- head(tail(green_day, 2), 1)
+green_one_week_prior <- tail(head(green_day, 8), 1)
+green_yesterday_difference <- round(((green_today - green_yesterday) / green_yesterday) * 100, digit = 2)
+green_week_prior_difference <- round(((green_today - green_one_week_prior) / green_one_week_prior) * 100, digit = 2)
+
+##Ubers:
+#uber_today <- tail(uber_day, 1)
+uber_today <- head(uber_day, 1)
+#uber_yesterday <- head(tail(uber_day, 2), 1)
+uber_yesterday <- tail(head(uber_day, 2), 1)
+uber_one_week_prior <- tail(head(uber_day, 8), 1)
+uber_yesterday_difference <- round(((uber_today - uber_yesterday) / uber_yesterday) * 100, digit = 2)
+uber_week_prior_difference <- round(((uber_today - uber_one_week_prior) / uber_one_week_prior) * 100, digit = 2)
+
+##Lyfts:
+#lyft_today <- tail(lyft_day, 1)
+lyft_today <- head(lyft_day, 1)
+#lyft_yesterday <- head(tail(lyft_day, 2), 1)
+lyft_yesterday <- tail(head(lyft_day, 2), 1)
+lyft_one_week_prior <- tail(head(lyft_day, 8), 1)
+lyft_yesterday_difference <- round(((lyft_today - lyft_yesterday) / lyft_yesterday) * 100, digit = 2)
+lyft_week_prior_difference <- round(((lyft_today - lyft_one_week_prior) / lyft_one_week_prior) * 100, digit = 2)
+
+##High Volumes:
+hv_today <- uber_today + lyft_today
+hv_yesterday <- uber_yesterday + lyft_yesterday
+hv_one_week_prior <- uber_one_week_prior + lyft_one_week_prior
+hv_yesterday_difference <- round(((hv_today - hv_yesterday) / hv_yesterday) * 100, digit = 2)
+hv_week_prior_difference <- round(((hv_today - hv_one_week_prior)/ hv_one_week_prior) * 100, digit = 2)
+
+```
+
+```{r weekly_dataframe_reference, include = FALSE}
+df_weekly <- data.frame("Industry" = c('Yellow Taxi', 'Green Taxi', 'FHV HV', 'a) Uber', 'b) Lyft'), 
+           "Total_Trips" = c(yellow_current_week, green_current_week, hv_current_week, uber_current_week, lyft_current_week),
+           "Percent Change Since Week Prior" = c(yellow_last_week_difference, green_last_week_difference, hv_last_week_difference, uber_last_week_difference, lyft_last_week_difference),
+           "Percent Change Since March 1, 2020" = c(yellow_march_difference, green_march_difference, hv_march_difference, uber_march_difference, lyft_march_difference),
+           "Percent Change Since April 5, 2020" = c(yellow_april_difference, green_april_difference, hv_april_difference, uber_april_difference, lyft_april_difference),
+           check.names = FALSE)
+
+df_weekly$Total_Trips <- formatC(df_weekly$Total_Trips, format="d", big.mark=",")
+names(df_weekly)[names(df_weekly) == 'Total_Trips'] <- 'Total Trips'
+
+
+```
+```{r getting_week_start_and_end_dates, include = FALSE}
+today <- Sys.Date()
+start_of_previous_week <- floor_date(as.Date(today, "%m/%d/%Y"), unit="week") - 6
+end_of_previous_week <- floor_date(as.Date(today, "%m/%d/%Y"), unit="week") 
+
+start_of_week <- format(as.Date(start_of_previous_week), "%m/%d/%Y")
+end_of_week <- format(as.Date(end_of_previous_week), "%m/%d/%Y")
+```
+<br>
+
+<center>
+
+### **Weekly Trip Count Summary:**
+
+##### `r start_of_week`  **-**  `r end_of_week` 
+##### <font size="4"> **`r formatC(df_weekly[1,2], format = "d", big.mark=",")`** </font> <span style="color: gold;">Yellow Taxi trips</span> during the week, a <font size="4"> **`r df_weekly[1, 3]`%** </font> change from the previous week
+
+##### <font size="4"> **`r formatC(df_weekly[2,2], format = "d", big.mark=",")`** </font> <span style="color: green;">Green Taxi trips</span> during the week, a <font size="4"> **`r df_weekly[2, 3]`%** </font> change from the previous week
+
+##### <font size="4"> **`r formatC(df_weekly[3,2], format = "d", big.mark=",")`** </font> <span style="color: black;">FHV HV trips</span> during the week, a <font size="4"> **`r df_weekly[3, 3]`%** </font> change from the previous week
+
+
+
+```{r weekly_dataframe, echo = FALSE}
+#Creating a dataframe with current week count, % change from last week, % change from april 2020, and % change from march 2020
+
+#Kable style table - not interactive
+#kbl(df_weekly, caption = "Weekly Trip Comparisons") %>%  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))  
+
+#DT style table - interactive and dynamic
+datatable(df_weekly, caption = 'Table 1: Weekly Trip Counts', options = list(dom = 't', lengthChange = FALSE))
+#%>% scroll_box(width = "100%", height = "225px")
+```
+
+```{r weekly_line_chart, echo = FALSE, fig.align='center', fig.width=10.5}
+#most_recent_week <- (max(weekly_trip_counts$week) - 1)
+most_recent_complete_week <- max(weekly_trip_counts$week)
+#weekly_trip_counts$week_numbers <- as.factor(weekly_trip_counts$week_numbers)
+#as.Date(most_recent_complete_week)
+options(scipen = 999)
+
+latest_week <- max(hv_test_bind$week_start_date)
+
+weekly_line_chart <- hv_test_bind %>% filter(week_start_date <= latest_week) %>% 
+                     group_by(company, week_start_date) %>% 
+                     filter(company == 'fhv hv' | company == 'yellow') %>% #| company == 'green') %>% 
+                     ggplot(aes(x = week_start_date, 
+                                y = count, 
+                                color = company))  + 
+                      geom_line() + 
+                      geom_point() +
+                      scale_y_continuous(name = 'Weekly Trips', 
+                                        labels = comma, 
+                                        limits = c(0, 5000000)) +
+                      #scale_y_log10(name = 'Weekly Trips', breaks = c(1,20000,100000,950000,2750000,5000000)) +
+                      #coord_trans(y = 'log10') +
+                      scale_x_date(name = 'Date', 
+                                   date_breaks = '1 week', 
+                                   labels = date_format("%b-%d"), 
+                                   limits = as.Date(c('2022-01-02',most_recent_complete_week ))) +
+                      ggtitle("Figure 1: Weekly Trip Counts") +
+                      theme(plot.title = element_text(hjust = 0.5), 
+                            panel.background = element_rect(fill = "white", colour = "white", size = 0.5, linetype = "solid"),
+                                                            axis.line = element_line(size = 1, colour = "black")) +
+                      scale_color_manual(values=c("grey", 
+                                                 #"green4", 
+                                                 "gold2")) 
+
+
+ggplotly(weekly_line_chart)
+```
+
+
+```{r daily_dataframe, include = FALSE, fig.align='center'}
+
+#Creating dataframe for daily counts/comparison
+df_daily <- data.frame("Industry" = c('Yellow Taxi', 'Green Taxi', 'FHV HV', 'a) Uber', 'b) Lyft'), 
+                       "trips_recent_day" = c(yellow_today, green_today, hv_today, uber_today, lyft_today),
+                       "trips_day_prior" = c(yellow_yesterday, green_yesterday, hv_yesterday, uber_yesterday, lyft_yesterday),
+                       "trips_prior_week" = c(yellow_one_week_prior, green_one_week_prior, hv_one_week_prior, uber_one_week_prior, lyft_one_week_prior),
+                       "Percent Change Since Day Prior" = c(yellow_yesterday_difference, green_yesterday_difference, hv_yesterday_difference, uber_yesterday_difference, lyft_yesterday_difference),
+                       "Percent Change Since One Week Prior" = c(yellow_week_prior_difference, green_week_prior_difference, hv_week_prior_difference, uber_week_prior_difference, lyft_week_prior_difference), check.names = FALSE)
+
+df_daily$trips_recent_day <- formatC(df_daily$trips_recent_day, format="d", big.mark=",")
+df_daily$trips_day_prior <- formatC(df_daily$trips_day_prior, format="d", big.mark=",")
+df_daily$trips_prior_week <- formatC(df_daily$trips_prior_week, format="d", big.mark=",")
+
+
+names(df_daily)[names(df_daily) == 'trips_recent_day'] <- 'Total Trips on Most Recent Day'
+names(df_daily)[names(df_daily) == 'trips_day_prior'] <- 'Total Trips on Day Prior'
+names(df_daily)[names(df_daily) == 'trips_prior_week'] <- 'Total Trips on Same Day of Prior Week'
+
+
+```
+
+<br>
+
+### **Daily Trip Count Summary:**
+
+
+##### `r format(as.Date(max(data$date)), "%m/%d/%Y")`
+##### <font size="4"> **`r df_daily[1,2]`**</font> <span style="color: gold;">Yellow Taxi trips</span> during the day, a <font size="4"> `r df_daily[1, 5]`% </font> change from the previous day
+
+##### <font size="4"> **`r formatC(df_daily[2,2], format = "d", big.mark=",")`**</font> <span style="color: green;">Green Taxi trips</span> during the day, a <font size="4"> `r df_daily[2, 5]`% </font> change from the previous day
+
+##### <font size="4"> **`r formatC(df_daily[3,2], format = "d", big.mark=",")`**</font> <span style="color: black;">FHV HV trips</span> during the day, a <font size="4"> `r df_daily[3, 5]`% </font> change from the previous day
+
+
+
+</center>
+
+```{r daily_df, echo = FALSE, fig.height = 3}
+#############################################################################################################
+
+#Kable table - not interactive
+#kbl(df_daily, caption = "Daily Trip Comparisons") %>%  kable_styling(bootstrap_options = c("striped", "hover", "condensed")) 
+datatable(df_daily, caption = 'Table 2: Daily Trip Counts', options = list(dom = 't', lengthChange = FALSE))
+
+```
+
+```{r daily_line_chart, echo = FALSE, fig.align='center', fig.width=10.5}
+most_recent_day <- max(data$date)
+
+daily_line <- hv_daily_bind %>% filter(date <= most_recent_day) %>% 
+              group_by(date, company) %>% 
+              filter(company == 'fhv hv' | company == 'yellow') %>% #| company == 'green') %>% 
+              ggplot(aes(x = date, y = count, color = company)) + 
+                  geom_line() + geom_point() + 
+              #scale_y_log10(name = 'Daily Trips', breaks = c(1,2000, 50000, 100000, 400000,800000)) +
+                  scale_y_continuous(name = 'Daily Trips', 
+                                 labels = comma) + 
+                  scale_x_date(name = 'Date', limits = as.Date(c('2022-01-03', most_recent_day)), 
+                               breaks = seq.Date(ymd("2022-01-03"),ymd(most_recent_day), by = 'week'),
+                               date_labels = "%b-%d") +                                                                                         
+                  theme(plot.title = element_text(hjust = 0.5), 
+                        panel.background = element_rect(fill = "white", colour = "white", size = 0.5, linetype = "solid"), axis.line = element_line(size = 1, colour = "black")) +
+                  scale_color_manual(values=c("grey", 
+                                            # "green4", 
+                                              "gold2")) + 
+                  ggtitle("Figure 2: Daily Trip Counts")
+
+ggplotly(daily_line) 
+```
+
